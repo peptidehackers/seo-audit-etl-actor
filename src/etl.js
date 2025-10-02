@@ -17,12 +17,20 @@ function parseCsvSmart(buffer) {
   return res.data || [];
 }
 
-// Find a column among several possible header names (case-insensitive)
+// Find a column among several possible header names (case-insensitive, trimmed, space-normalized)
 function pickCol(row, candidates) {
+  const norm = (s) => String(s ?? '')
+    .replace(/\u00A0/g, ' ')       // NBSP -> normal space
+    .replace(/\s+/g, ' ')          // collapse spaces
+    .trim()                        // trim ends
+    .toLowerCase();
+
   const keys = Object.keys(row || {});
+  const map = new Map(keys.map(k => [norm(k), k]));  // normalized -> original key
+
   for (const want of candidates) {
-    const hit = keys.find(k => k.toLowerCase() === want.toLowerCase());
-    if (hit) return hit;
+    const hit = map.get(norm(want));
+    if (hit) return hit;           // return the original key as it appears in the CSV
   }
   return null;
 }
