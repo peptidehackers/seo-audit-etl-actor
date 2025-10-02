@@ -7,12 +7,13 @@
   "nodejsVersion": "20.0.0",
   "input": {
     "title": "Audit ETL Input",
+    "schemaVersion": 1,
     "type": "object",
     "properties": {
-      "client": { "type": "string" },
-      "domain": { "type": "string" },
-      "runDate": { "type": "string" },
-      "zipUrl": { "type": "string" }
+      "client": { "type": "string", "title": "Client slug (e.g., acme)" },
+      "domain": { "type": "string", "title": "Domain (e.g., acme.com)" },
+      "runDate": { "type": "string", "title": "Run date (YYYY-MM-DD)" },
+      "zipUrl": { "type": "string", "title": "Public/signed URL to the ZIP" }
     },
     "required": ["client", "domain", "runDate", "zipUrl"]
   }
