@@ -7,13 +7,30 @@
   "nodejsVersion": "20.0.0",
   "input": {
     "title": "Audit ETL Input",
+    "description": "Provide the client info and a public/signed URL to the dated audit ZIP.",
     "schemaVersion": 1,
     "type": "object",
     "properties": {
-      "client": { "type": "string", "title": "Client slug (e.g., acme)" },
-      "domain": { "type": "string", "title": "Domain (e.g., acme.com)" },
-      "runDate": { "type": "string", "title": "Run date (YYYY-MM-DD)" },
-      "zipUrl": { "type": "string", "title": "Public/signed URL to the ZIP" }
+      "client": {
+        "title": "Client slug",
+        "description": "Short identifier for the client (e.g., acme).",
+        "type": "string"
+      },
+      "domain": {
+        "title": "Primary domain",
+        "description": "The site domain for this audit (e.g., acme.com).",
+        "type": "string"
+      },
+      "runDate": {
+        "title": "Run date (YYYY-MM-DD)",
+        "description": "The date label for this audit run, used in outputs.",
+        "type": "string"
+      },
+      "zipUrl": {
+        "title": "ZIP URL",
+        "description": "Public or signed URL to the dated audit ZIP (Google Drive direct download or similar).",
+        "type": "string"
+      }
     },
     "required": ["client", "domain", "runDate", "zipUrl"]
   }
