@@ -2,7 +2,7 @@
   "actorSpecification": 1,
   "name": "seo-audit-etl",
   "title": "SEO Audit ETL (ZIP → normalized JSON + scores)",
-  "description": "Downloads a dated audit ZIP, parses CSV/JSON with robust fallbacks (Ahrefs UTF-16 TSV, nested zips), aggregates small metrics, computes proportional OSS/LSS with coverage, and outputs normalized_audit.json, scores.json, and etl_manifest.json.",
+  "description": "Downloads a dated audit ZIP, parses CSV/JSON with robust fallbacks (Ahrefs UTF-16 TSV, nested zips), aggregates small metrics, computes proportional OSS/LSS with coverage, and outputs normalized_audit.json, scores.json, etl_manifest.json.",
   "version": "0.1",
   "buildTag": "latest",
   "nodejsVersion": "20.0.0",
@@ -16,29 +16,25 @@
         "title": "Client slug",
         "description": "Short identifier for the client (e.g., acme).",
         "type": "string",
-        "editor": "textfield",
-        "placeholder": "acme"
+        "editor": "textfield"
       },
       "domain": {
         "title": "Primary domain",
         "description": "The site's primary domain (e.g., acme.com).",
         "type": "string",
-        "editor": "textfield",
-        "placeholder": "acme.com"
+        "editor": "textfield"
       },
       "runDate": {
         "title": "Run date",
         "description": "Date label for this audit run (YYYY-MM-DD).",
         "type": "string",
-        "editor": "textfield",
-        "placeholder": "2025-10-01"
+        "editor": "textfield"
       },
       "zipUrl": {
         "title": "ZIP URL",
         "description": "Public or signed URL to the dated audit ZIP (e.g., Google Drive direct download link).",
         "type": "string",
-        "editor": "textfield",
-        "placeholder": "https://drive.google.com/uc?export=download&id=<FILE_ID>"
+        "editor": "textfield"
       }
     },
     "required": ["client", "domain", "runDate", "zipUrl"]
