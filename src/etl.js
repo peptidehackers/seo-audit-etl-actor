@@ -27,7 +27,7 @@ function pickCol(row, candidates) {
   return null;
 }
 
-// strip non-numeric before converting
+// Strip non-numeric before converting
 const toNum = (v) => {
   const s = String(v ?? '').replace(/[^0-9.\-]/g, '');
   const n = Number(s);
@@ -54,13 +54,12 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const zipBuf = Buffer.from(await res.arrayBuffer());
 
-  // ZIP sanity check: must start with 'PK'
+  // ZIP sanity: must start with 'PK'
   const isZip = zipBuf.length >= 2 && zipBuf[0] === 0x50 && zipBuf[1] === 0x4B;
   if (!isZip) {
     await Actor.setValue('ZIP_DEBUG.bin', zipBuf, { contentType: 'application/octet-stream' });
     throw new Error(
-      'Downloaded file does not look like a ZIP. ' +
-      'Double-check zipUrl is a direct-download link (Drive: use uc?export=download&id=FILE_ID).'
+      'Downloaded file is not a ZIP. Use a direct-download link (Drive: uc?export=download&id=FILE_ID).'
     );
   }
 
@@ -68,35 +67,39 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
   const out  = emptyNormalized(client, domain, runDate);
   const prov = out.provenance;
 
-  // -------- Ahrefs Keywords (explicitly target your columns)
+  // ---------- Ahrefs Keywords (your exact columns)
+  // Headers: Current position, Previous position (capitalized first word)
   let buf = readEntry(zip, 'ahrefs_keywords.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
     if (rows.length) {
-      // Your export fields include "current position" and "previous position"
-      // Use current first; fallback to previous if needed.
-      const posCol = pickCol(rows[0], ['current position']) ||
-                     pickCol(rows[0], ['previous position']);
+      const posCol =
+        pickCol(rows[0], ['Current position']) ||
+        pickCol(rows[0], ['Previous position']);
       log.info('Ahrefs keywords: position column', { posCol });
+
       if (posCol) {
-        const pos = rows.map(r => toNum(r[posCol])).filter(n => Number.isFinite(n) && n > 0);
+        const pos = rows
+          .map(r => toNum(r[posCol]))
+          .filter(n => Number.isFinite(n) && n > 0);
         out.onsite.keywords.top3   = pos.filter(p => p <= 3).length;
         out.onsite.keywords.top10  = pos.filter(p => p <= 10).length;
         out.onsite.keywords.top100 = pos.filter(p => p <= 100).length;
       } else {
-        log.warning('Ahrefs keywords: no usable "current position"/"previous position" column found.');
+        log.warning('Ahrefs keywords: no "Current position" / "Previous position" column found.');
       }
+
       prov.ahrefs = true;
       manifest['ahrefs_keywords.csv'].rows = rows.length;
     } else manifest['ahrefs_keywords.csv'].status = 'partial';
   }
 
-  // -------- Ahrefs Top Pages (be flexible about URL column)
+  // ---------- Ahrefs Top Pages (flexible URL detection incl. "Current URL")
   buf = readEntry(zip, 'ahrefs_top_pages.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
     if (rows.length) {
-      const urlCol = pickCol(rows[0], ['current url','url','page url','address']); // include "Current URL"
+      const urlCol = pickCol(rows[0], ['Current URL','url','page url','address']);
       log.info('Ahrefs top pages: URL column', { urlCol });
       out.onsite.content.pages_total =
         out.onsite.content.pages_total ??
@@ -106,7 +109,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     } else manifest['ahrefs_top_pages.csv'].status = 'partial';
   }
 
-  // -------- Ahrefs Referring Domains
+  // ---------- Ahrefs Referring Domains
   buf = readEntry(zip, 'ahrefs_backlinks.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
@@ -122,7 +125,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     } else manifest['ahrefs_backlinks.csv'].status = 'partial';
   }
 
-  // -------- Ahrefs Site Audit (nested zip)
+  // ---------- Ahrefs Site Audit (nested zip)
   buf = readEntry(zip, 'ahrefs_site_audit.zip', manifest);
   if (buf) {
     try {
@@ -154,7 +157,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     }
   }
 
-  // -------- Screaming Frog internal all
+  // ---------- Screaming Frog: internal all
   buf = readEntry(zip, 'sf_internal_all.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
@@ -171,34 +174,33 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     } else manifest['sf_internal_all.csv'].status = 'partial';
   }
 
-  // Screaming Frog structured data (more header variants)
+  // ---------- Screaming Frog structured data (your summary export)
+  // Headers like: Address, Errors, Warnings, Total Types, Unique Types, Type-1, etc.
   buf = readEntry(zip, 'sf_structured_data.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
     if (rows.length) {
-      const elCol = pickCol(rows[0], ['element','type','schema type','schema_type','schema']);
-      log.info('SF structured data: element column', { elCol });
-      if (elCol) {
-        const el = rows.map(r => String(r[elCol]).toLowerCase());
-        const has = s => el.some(e => e.includes(s));
-        out.onsite.schema.organization  = has('organization');
-        out.onsite.schema.localbusiness = has('localbusiness');
-        out.onsite.schema.service       = has('service');
-        out.onsite.schema.faq           = has('faq');
-        out.onsite.schema.review        = has('review');
-        prov.screamingfrog = true;
-        manifest['sf_structured_data.csv'].rows = rows.length;
-      } else manifest['sf_structured_data.csv'].status = 'partial';
+      // Summary view → no per-type rows; set booleans false and add a note.
+      out.onsite.schema.organization  = false;
+      out.onsite.schema.localbusiness = false;
+      out.onsite.schema.service       = false;
+      out.onsite.schema.faq           = false;
+      out.onsite.schema.review        = false;
+
+      manifest['sf_structured_data.csv'].rows = rows.length;
+      manifest['sf_structured_data.csv'].note =
+        'Structured data summary detected. For per-type booleans, export Reports → Structured Data → Extracted Structured Data.';
+      prov.screamingfrog = true;
     }
   }
 
-  // Duplicates / Images (info)
+  // Duplicates / Images (info only)
   buf = readEntry(zip, 'sf_duplicates.csv', manifest);
   if (buf) manifest['sf_duplicates.csv'].rows = parseCsvSmart(buf).length;
   buf = readEntry(zip, 'sf_images.csv', manifest);
   if (buf) manifest['sf_images.csv'].rows = parseCsvSmart(buf).length;
 
-  // -------- Lighthouse JSONs
+  // ---------- Lighthouse JSONs
   const lhFiles = ['lighthouse_home.json','lighthouse_service.json','lighthouse_city.json'];
   const lh = [];
   for (const f of lhFiles) {
@@ -236,6 +238,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     out.onsite.cwv.lcp_p75 = lcp.length ? p75(lcp) : 'missing';
     out.onsite.cwv.cls_p75 = cls.length ? p75(cls) : 'missing';
     out.onsite.cwv.inp_p75 = inp.length ? p75(inp) : 'missing';
+    // pass rate across URLs
     let pass=0, total=0;
     for (const m of lh) {
       if (m.lcp_ms===null || m.cls===null || m.inp_ms===null) continue;
@@ -245,7 +248,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     out.onsite.cwv.pass_rate = total ? pass/total : 'missing';
   }
 
-  // -------- BrightLocal Ranks (flexible)
+  // ---------- BrightLocal Ranks
   buf = readEntry(zip, 'brightlocal_ranks.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
@@ -269,7 +272,8 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     }
   }
 
-  // -------- BrightLocal Citations (flexible + normalize to 0..1)
+  // ---------- BrightLocal Citations (proxy consistency from your headers)
+  // Headers include: Status, General Status, Citation Link (no explicit % column)
   buf = readEntry(zip, 'brightlocal_citations.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
@@ -277,25 +281,36 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
       prov.brightlocal = true;
       manifest['brightlocal_citations.csv'].rows = rows.length;
 
-      const cCol = pickCol(rows[0], [
-        'consistency','nap consistency','consistency %','consistency%','accuracy','accuracy %',
-        'score','citation score','overall score'
-      ]);
-      log.info('BL citations: consistency column', { cCol });
-      if (cCol) {
-        const nums = rows
-          .map(r => String(r[cCol]).replace('%',''))
-          .map(v => toNum(v))
-          .filter(Number.isFinite);
-        if (nums.length) {
-          const avg = nums.reduce((a,b)=>a+b, 0) / nums.length;
-          out.local.citations.consistency = (avg > 1) ? (avg / 100) : avg; // 0..1
+      const statusCol  = pickCol(rows[0], ['Status']);
+      const gStatusCol = pickCol(rows[0], ['General Status']);
+      const linkCol    = pickCol(rows[0], ['Citation Link']);
+
+      let good = 0, total = 0;
+      for (const r of rows) {
+        const s  = statusCol  ? String(r[statusCol]).toLowerCase()  : '';
+        const gs = gStatusCol ? String(r[gStatusCol]).toLowerCase() : '';
+        const link = linkCol  ? String(r[linkCol]).trim()           : '';
+
+        const looksLive =
+          (s.includes('live') || s.includes('present') || s.includes('ok')) ||
+          (gs.includes('live') || gs.includes('present') || gs.includes('ok')) ||
+          (link.length > 0);
+
+        if (s || gs || link) {
+          total += 1;
+          if (looksLive) good += 1;
         }
+      }
+      if (total > 0) {
+        out.local.citations.consistency = good / total; // 0..1
+        log.info('BL citations: proxy consistency', { good, total, consistency: out.local.citations.consistency });
+      } else {
+        log.info('BL citations: no status/link fields to compute consistency');
       }
     }
   }
 
-  // -------- BL Reviews (often placeholder)
+  // ---------- BrightLocal Reviews (often placeholder)
   buf = readEntry(zip, 'brightlocal_reviews.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
@@ -308,7 +323,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     }
   }
 
-  // -------- BL/GBP public listing: read only public metrics
+  // ---------- BL/GBP public listing: read only public metrics
   buf = readEntry(zip, 'brightlocal_gbp_insights.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
@@ -326,7 +341,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     }
   }
 
-  // -------- GBP categories/photos (safe)
+  // ---------- GBP categories/photos (safe)
   buf = readEntry(zip, 'gbp_categories.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
@@ -350,7 +365,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     manifest['gbp_photos.csv'].rows = rows.length;
   }
 
-  // -------- Login-required placeholders (mark present/missing)
+  // ---------- Login-required placeholders (mark present/missing)
   for (const name of [
     'surfer_page_queue.csv','gsc_queries_28d.csv','gsc_pages_28d.csv',
     'ga4_pages.csv','ga4_conversions.csv','ga4_channels.csv',
@@ -363,7 +378,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     else manifest[name] = { status: 'placeholder', note: 'access_required_or_empty' };
   }
 
-  // -------- Presence flags for GSC/GA4 if real tables exist
+  // ---------- Presence flags for GSC/GA4 if real tables exist
   for (const name of ['gsc_queries_28d.csv','gsc_pages_28d.csv']) {
     const ent = zip.getEntry(name);
     if (!ent) continue;
@@ -377,7 +392,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     if (rows.length && !(rows[0].status && rows[0].message)) out.provenance.ga4 = 'present';
   }
 
-  // -------- Compute proportional scores
+  // ---------- Compute proportional scores
   const scores = computeScores(out);
 
   return { normalized_audit: out, scores, manifest };
