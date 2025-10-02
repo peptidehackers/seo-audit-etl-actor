@@ -2,34 +2,43 @@
   "actorSpecification": 1,
   "name": "seo-audit-etl",
   "title": "SEO Audit ETL (ZIP → normalized JSON + scores)",
+  "description": "Downloads a dated audit ZIP, parses CSV/JSON with robust fallbacks (Ahrefs UTF-16 TSV, nested zips), aggregates small metrics, computes proportional OSS/LSS with coverage, and outputs normalized_audit.json, scores.json, and etl_manifest.json.",
   "version": "0.1",
   "buildTag": "latest",
   "nodejsVersion": "20.0.0",
   "input": {
     "title": "Audit ETL Input",
-    "description": "Provide the client info and a public/signed URL to the dated audit ZIP.",
+    "description": "Provide the client details and a public/signed URL to the dated audit ZIP.",
     "schemaVersion": 1,
     "type": "object",
     "properties": {
       "client": {
         "title": "Client slug",
         "description": "Short identifier for the client (e.g., acme).",
-        "type": "string"
+        "type": "string",
+        "editor": "textfield",
+        "placeholder": "acme"
       },
       "domain": {
         "title": "Primary domain",
-        "description": "The site domain for this audit (e.g., acme.com).",
-        "type": "string"
+        "description": "The site's primary domain (e.g., acme.com).",
+        "type": "string",
+        "editor": "textfield",
+        "placeholder": "acme.com"
       },
       "runDate": {
-        "title": "Run date (YYYY-MM-DD)",
-        "description": "The date label for this audit run, used in outputs.",
-        "type": "string"
+        "title": "Run date",
+        "description": "Date label for this audit run (YYYY-MM-DD).",
+        "type": "string",
+        "editor": "textfield",
+        "placeholder": "2025-10-01"
       },
       "zipUrl": {
         "title": "ZIP URL",
-        "description": "Public or signed URL to the dated audit ZIP (Google Drive direct download or similar).",
-        "type": "string"
+        "description": "Public or signed URL to the dated audit ZIP (e.g., Google Drive direct download link).",
+        "type": "string",
+        "editor": "textfield",
+        "placeholder": "https://drive.google.com/uc?export=download&id=<FILE_ID>"
       }
     },
     "required": ["client", "domain", "runDate", "zipUrl"]
