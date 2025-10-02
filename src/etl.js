@@ -1,6 +1,7 @@
 import AdmZip from 'adm-zip';
 import Papa from 'papaparse';
 import iconv from 'iconv-lite';
+import { Actor, log } from 'apify';
 import { emptyNormalized } from './schema.js';
 import { computeScores } from './scoring.js';
 
@@ -16,14 +17,6 @@ function parseCsvSmart(buffer) {
   return res.data || [];
 }
 
-function readEntry(zip, name, manifest) {
-  const ent = zip.getEntry(name);
-  if (!ent) { manifest[name] = { status: 'missing' }; return null; }
-  const buf = ent.getData();
-  manifest[name] = { status: 'present', size: buf.length };
-  return buf;
-}
-
 // Find a column among several possible header names (case-insensitive)
 function pickCol(row, candidates) {
   const keys = Object.keys(row || {});
@@ -34,8 +27,22 @@ function pickCol(row, candidates) {
   return null;
 }
 
+// strip non-numeric before converting
+const toNum = (v) => {
+  const s = String(v ?? '').replace(/[^0-9.\-]/g, '');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+};
+
+function readEntry(zip, name, manifest) {
+  const ent = zip.getEntry(name);
+  if (!ent) { manifest[name] = { status: 'missing' }; return null; }
+  const buf = ent.getData();
+  manifest[name] = { status: 'present', size: buf.length };
+  return buf;
+}
 function maxNum(rows, col) {
-  const xs = rows.map(r => Number(r[col])).filter(n => !Number.isNaN(n));
+  const xs = rows.map(r => toNum(r[col])).filter(n => Number.isFinite(n));
   return xs.length ? Math.max(...xs) : null;
 }
 
@@ -46,34 +53,51 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
   const res = await fetchImpl(zipUrl);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const zipBuf = Buffer.from(await res.arrayBuffer());
-  const zip    = new AdmZip(zipBuf);
 
+  // ZIP sanity check: must start with 'PK'
+  const isZip = zipBuf.length >= 2 && zipBuf[0] === 0x50 && zipBuf[1] === 0x4B;
+  if (!isZip) {
+    await Actor.setValue('ZIP_DEBUG.bin', zipBuf, { contentType: 'application/octet-stream' });
+    throw new Error(
+      'Downloaded file does not look like a ZIP. ' +
+      'Double-check zipUrl is a direct-download link (Drive: use uc?export=download&id=FILE_ID).'
+    );
+  }
+
+  const zip = new AdmZip(zipBuf);
   const out  = emptyNormalized(client, domain, runDate);
   const prov = out.provenance;
 
-  // -------- Ahrefs Keywords
+  // -------- Ahrefs Keywords (explicitly target your columns)
   let buf = readEntry(zip, 'ahrefs_keywords.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
     if (rows.length) {
-      const posCol = pickCol(rows[0], ['current position','position']);
-      const pos = posCol
-        ? rows.map(r => Number(r[posCol])).filter(n => !Number.isNaN(n))
-        : [];
-      out.onsite.keywords.top3   = pos.filter(p => p <= 3).length;
-      out.onsite.keywords.top10  = pos.filter(p => p <= 10).length;
-      out.onsite.keywords.top100 = pos.filter(p => p <= 100).length;
+      // Your export fields include "current position" and "previous position"
+      // Use current first; fallback to previous if needed.
+      const posCol = pickCol(rows[0], ['current position']) ||
+                     pickCol(rows[0], ['previous position']);
+      log.info('Ahrefs keywords: position column', { posCol });
+      if (posCol) {
+        const pos = rows.map(r => toNum(r[posCol])).filter(n => Number.isFinite(n) && n > 0);
+        out.onsite.keywords.top3   = pos.filter(p => p <= 3).length;
+        out.onsite.keywords.top10  = pos.filter(p => p <= 10).length;
+        out.onsite.keywords.top100 = pos.filter(p => p <= 100).length;
+      } else {
+        log.warning('Ahrefs keywords: no usable "current position"/"previous position" column found.');
+      }
       prov.ahrefs = true;
       manifest['ahrefs_keywords.csv'].rows = rows.length;
     } else manifest['ahrefs_keywords.csv'].status = 'partial';
   }
 
-  // -------- Ahrefs Top Pages
+  // -------- Ahrefs Top Pages (be flexible about URL column)
   buf = readEntry(zip, 'ahrefs_top_pages.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
     if (rows.length) {
-      const urlCol = pickCol(rows[0], ['url','page url','address']);
+      const urlCol = pickCol(rows[0], ['current url','url','page url','address']); // include "Current URL"
+      log.info('Ahrefs top pages: URL column', { urlCol });
       out.onsite.content.pages_total =
         out.onsite.content.pages_total ??
         (urlCol ? new Set(rows.map(r => r[urlCol])).size : rows.length);
@@ -90,7 +114,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
       const drCol = pickCol(rows[0], ['dr','domain rating']);
       out.backlinks.ref_domains = rows.length;
       if (drCol) {
-        const nums = rows.map(r => Number(r[drCol])).filter(n => !Number.isNaN(n));
+        const nums = rows.map(r => toNum(r[drCol])).filter(Number.isFinite);
         if (nums.length) out.backlinks.dr = nums.reduce((a,b)=>a+b, 0) / nums.length;
       }
       prov.ahrefs = true;
@@ -130,7 +154,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     }
   }
 
-  // -------- Screaming Frog: internal all
+  // -------- Screaming Frog internal all
   buf = readEntry(zip, 'sf_internal_all.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
@@ -139,7 +163,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
       manifest['sf_internal_all.csv'].rows = rows.length;
       const scCol = pickCol(rows[0], ['status code','status']);
       if (scCol) {
-        const sc = rows.map(r => Number(r[scCol])).filter(n => !Number.isNaN(n));
+        const sc = rows.map(r => toNum(r[scCol])).filter(Number.isFinite);
         out.onsite.errors['4xx'] += sc.filter(n => n >= 400 && n < 500).length;
         out.onsite.errors['5xx'] += sc.filter(n => n >= 500).length;
       }
@@ -147,12 +171,13 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     } else manifest['sf_internal_all.csv'].status = 'partial';
   }
 
-  // Structured data (booleans)
+  // Screaming Frog structured data (more header variants)
   buf = readEntry(zip, 'sf_structured_data.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
     if (rows.length) {
-      const elCol = pickCol(rows[0], ['element','type']);
+      const elCol = pickCol(rows[0], ['element','type','schema type','schema_type','schema']);
+      log.info('SF structured data: element column', { elCol });
       if (elCol) {
         const el = rows.map(r => String(r[elCol]).toLowerCase());
         const has = s => el.some(e => e.includes(s));
@@ -167,11 +192,9 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     }
   }
 
-  // Duplicates (info only)
+  // Duplicates / Images (info)
   buf = readEntry(zip, 'sf_duplicates.csv', manifest);
   if (buf) manifest['sf_duplicates.csv'].rows = parseCsvSmart(buf).length;
-
-  // Images (info only)
   buf = readEntry(zip, 'sf_images.csv', manifest);
   if (buf) manifest['sf_images.csv'].rows = parseCsvSmart(buf).length;
 
@@ -213,7 +236,6 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     out.onsite.cwv.lcp_p75 = lcp.length ? p75(lcp) : 'missing';
     out.onsite.cwv.cls_p75 = cls.length ? p75(cls) : 'missing';
     out.onsite.cwv.inp_p75 = inp.length ? p75(inp) : 'missing';
-    // pass rate across URLs
     let pass=0, total=0;
     for (const m of lh) {
       if (m.lcp_ms===null || m.cls===null || m.inp_ms===null) continue;
@@ -232,8 +254,9 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
       manifest['brightlocal_ranks.csv'].rows = rows.length;
 
       const posCol = pickCol(rows[0], ['position','rank','serp position','pos']);
+      log.info('BL ranks: position column', { posCol });
       if (posCol) {
-        const posVals = rows.map(r => Number(r[posCol])).filter(n => !Number.isNaN(n) && n > 0);
+        const posVals = rows.map(r => toNum(r[posCol])).filter(n => Number.isFinite(n) && n > 0);
         if (posVals.length) {
           const avg = posVals.reduce((a,b)=>a+b, 0) / posVals.length;
           out.local.rank.avg_pos  = Math.round(avg * 10) / 10;
@@ -246,7 +269,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     }
   }
 
-  // -------- BrightLocal Citations (flexible)
+  // -------- BrightLocal Citations (flexible + normalize to 0..1)
   buf = readEntry(zip, 'brightlocal_citations.csv', manifest);
   if (buf) {
     const rows = parseCsvSmart(buf);
@@ -254,14 +277,19 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
       prov.brightlocal = true;
       manifest['brightlocal_citations.csv'].rows = rows.length;
 
-      const cCol = pickCol(rows[0], ['consistency','nap consistency','score','citation score','accuracy']);
+      const cCol = pickCol(rows[0], [
+        'consistency','nap consistency','consistency %','consistency%','accuracy','accuracy %',
+        'score','citation score','overall score'
+      ]);
+      log.info('BL citations: consistency column', { cCol });
       if (cCol) {
         const nums = rows
-          .map(r => Number(String(r[cCol]).replace('%','')))
-          .filter(n => !Number.isNaN(n));
+          .map(r => String(r[cCol]).replace('%',''))
+          .map(v => toNum(v))
+          .filter(Number.isFinite);
         if (nums.length) {
-          const val = nums.reduce((a,b)=>a+b, 0) / nums.length;
-          out.local.citations.consistency = (val > 1) ? (val / 100) : val; // 0..1
+          const avg = nums.reduce((a,b)=>a+b, 0) / nums.length;
+          out.local.citations.consistency = (avg > 1) ? (avg / 100) : avg; // 0..1
         }
       }
     }
@@ -272,9 +300,8 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
   if (buf) {
     const rows = parseCsvSmart(buf);
     if (rows.length && !(rows[0].status && rows[0].message)) {
-      prov.brightlocal = true;
-      manifest['brightlocal_reviews.csv'].rows = rows.length;
-      // If your export includes total/rating columns, map them here.
+      prov.brightlocal = true; manifest['brightlocal_reviews.csv'].rows = rows.length;
+      // If totals/avg present in your export, map them here.
     } else {
       manifest['brightlocal_reviews.csv'].status = 'placeholder';
       manifest['brightlocal_reviews.csv'].note   = 'login_required';
@@ -294,9 +321,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
       if (colPhotos)  out.local.gbp.photos_total    = maxNum(rows, colPhotos);
       prov.brightlocal = true;
       manifest['brightlocal_gbp_insights.csv'] = {
-        status: 'partial',
-        rows: rows.length,
-        note: 'public listing only; true Insights (calls/clicks/directions) missing'
+        status: 'partial', rows: rows.length, note: 'public listing only; true Insights missing'
       };
     }
   }
@@ -307,13 +332,11 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
     const rows = parseCsvSmart(buf);
     const prim = rows
       .filter(r => String(r['category_type']).toLowerCase() === 'primary')
-      .map(r => r['category_name'])
-      .filter(Boolean);
+      .map(r => r['category_name']).filter(Boolean);
     out.local.gbp.primary_category = prim.length ? String(prim[0]) : null;
     out.local.gbp.secondary_categories = rows
       .filter(r => String(r['category_type']).toLowerCase() === 'secondary')
-      .map(r => r['category_name'])
-      .filter(Boolean);
+      .map(r => r['category_name']).filter(Boolean);
     prov.gbp_public = true;
     manifest['gbp_categories.csv'].rows = rows.length;
   }
@@ -322,7 +345,7 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
   if (buf) {
     const rows = parseCsvSmart(buf);
     const totalRow = rows.find(r => String(r['photo_type']).toLowerCase() === 'total');
-    if (totalRow) out.local.gbp.photos_total = Number(totalRow['count']);
+    if (totalRow) out.local.gbp.photos_total = toNum(totalRow['count']);
     prov.gbp_public = true;
     manifest['gbp_photos.csv'].rows = rows.length;
   }
