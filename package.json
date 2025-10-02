@@ -1,1 +1,14 @@
-
+{
+  "name": "seo-audit-etl",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node ./src/main.js"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.12",
+    "apify": "^3.2.3",
+    "iconv-lite": "^0.6.3",
+    "papaparse": "^5.4.1"
+  }
+}
