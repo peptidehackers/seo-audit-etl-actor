@@ -1,1 +1,19 @@
-
+{
+  "actorSpecification": 1,
+  "name": "seo-audit-etl",
+  "title": "SEO Audit ETL (ZIP → normalized JSON + scores)",
+  "version": "0.1",
+  "buildTag": "latest",
+  "nodejsVersion": "20.0.0",
+  "input": {
+    "title": "Audit ETL Input",
+    "type": "object",
+    "properties": {
+      "client": { "type": "string" },
+      "domain": { "type": "string" },
+      "runDate": { "type": "string" },
+      "zipUrl": { "type": "string" }
+    },
+    "required": ["client", "domain", "runDate", "zipUrl"]
+  }
+}
