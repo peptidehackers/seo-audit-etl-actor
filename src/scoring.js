@@ -3,13 +3,13 @@ export function computeScores(out) {
   const ossW = { gsc_clicks: 30, kw_top10: 20, site_health: 20, cwv_pass: 15, indexed_valid: 15 };
   const lssW = { avg_local_rank: 40, pct_top3: 25, citations: 15, reviews: 10, gbp_actions: 10 };
 
-  // Availability flags (what data we actually have)
+  // Availability
   const ossAvail = {
     kw_top10: out.onsite.keywords.top10 !== null,
-    site_health: true, // derived from errors
+    site_health: true,
     cwv_pass: out.onsite.cwv.pass_rate !== "missing",
-    gsc_clicks: false,     // prospect audits: typically missing
-    indexed_valid: false   // unless Coverage was provided
+    gsc_clicks: false,
+    indexed_valid: false
   };
 
   // Raw 0..1 component scores
@@ -22,9 +22,15 @@ export function computeScores(out) {
 
   s.cwv_pass = (out.onsite.cwv.pass_rate !== "missing") ? out.onsite.cwv.pass_rate : null;
 
+  // Errors per page → site health (0 when EPP >= 0.5)
   const errs = out.onsite.errors;
   const totalErr = Object.values(errs).filter(v => Number.isInteger(v)).reduce((a,b)=>a+b, 0);
-  s.site_health = Math.max(0, Math.min(1, 1 - (totalErr / 500))); // simple inverse; tune if you like
+  const pages = out.onsite.content.pages_total || 100;
+  const epp   = totalErr / pages;
+  const BAD_EPP = 0.5;
+  let health = 1 - (epp / BAD_EPP);
+  health = Math.max(0, Math.min(1, health));
+  s.site_health = health;
 
   s.gsc_clicks    = null;
   s.indexed_valid = null;
@@ -47,12 +53,12 @@ export function computeScores(out) {
     pct_top3: out.local.rank.pct_top3 !== null,
     citations: out.local.citations.consistency !== null && out.local.citations.consistency !== "missing",
     reviews: (out.local.reviews.avg_rating !== null || out.local.reviews.count_total !== null),
-    gbp_actions: false // only if true Insights present
+    gbp_actions: false
   };
 
   const ls = {};
   const avgPos = out.local.rank.avg_pos || 20;
-  ls.avg_local_rank = Math.max(0, Math.min(1, 1 - (avgPos - 1) / 19)); // 1 at pos=1, 0 near pos=20
+  ls.avg_local_rank = Math.max(0, Math.min(1, 1 - (avgPos - 1) / 19));
   ls.pct_top3 = out.local.rank.pct_top3 || 0;
   const cons = out.local.citations.consistency;
   ls.citations = (cons !== null && cons !== "missing") ? Number(cons) : null;
