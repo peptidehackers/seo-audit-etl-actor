@@ -17,20 +17,33 @@ function parseCsvSmart(buffer) {
   return res.data || [];
 }
 
-// Find a column among several possible header names (case-insensitive, trimmed, space-normalized)
+// Find a column among several possible header names (aggressive normalization)
 function pickCol(row, candidates) {
   const norm = (s) => String(s ?? '')
-    .replace(/\u00A0/g, ' ')       // NBSP -> normal space
-    .replace(/\s+/g, ' ')          // collapse spaces
-    .trim()                        // trim ends
+    .replace(/\u00A0/g, ' ')     // NBSP → space
+    .replace(/\s+/g, ' ')        // collapse multiple spaces
+    .trim()
     .toLowerCase();
 
+  // also keep a nospace form for fuzzy matches
+  const normNoSpace = (s) => norm(s).replace(/\s+/g, '');
+
   const keys = Object.keys(row || {});
-  const map = new Map(keys.map(k => [norm(k), k]));  // normalized -> original key
+  const lookup = new Map();
+  const lookupNoSpace = new Map();
+
+  for (const k of keys) {
+    const nk  = norm(k);
+    const nks = normNoSpace(k);
+    lookup.set(nk, k);           // normalized → original
+    lookupNoSpace.set(nks, k);   // nospace normalized → original
+  }
 
   for (const want of candidates) {
-    const hit = map.get(norm(want));
-    if (hit) return hit;           // return the original key as it appears in the CSV
+    const w  = norm(want);
+    const ws = normNoSpace(want);
+    if (lookup.has(w))      return lookup.get(w);
+    if (lookupNoSpace.has(ws)) return lookupNoSpace.get(ws);
   }
   return null;
 }
