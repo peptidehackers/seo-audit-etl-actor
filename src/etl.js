@@ -5,25 +5,41 @@ import { Actor, log } from 'apify';
 import { emptyNormalized } from './schema.js';
 import { computeScores } from './scoring.js';
 
-// CSV: try UTF-8; if empty/garbled, fallback to UTF-16 + tab, then UTF-16 + comma (Ahrefs variants)
+// CSV: UTF-8 -> UTF-16 sniff (BOM or many NULLs) -> parse with tab and comma
 function parseCsvSmart(buffer) {
+  const looksUtf16 =
+    (buffer.length >= 2 && ((buffer[0] === 0xFF && buffer[1] === 0xFE) || (buffer[0] === 0xFE && buffer[1] === 0xFF))) ||
+    // if >10% of bytes are 0x00, it’s almost certainly UTF-16
+    (buffer.slice(0, Math.min(buffer.length, 4096)).filter
+      ? false
+      : false); // keep compatibility in case Buffer doesn’t have filter (Node always does, but fallback below)
+
+  // quick NULL-byte heuristic (works in all Node versions)
+  let nullCount = 0;
+  const probeLen = Math.min(buffer.length, 4096);
+  for (let i = 0; i < probeLen; i++) if (buffer[i] === 0x00) nullCount++;
+  const isLikelyUtf16 = looksUtf16 || (nullCount / Math.max(probeLen, 1) > 0.10);
+
   const isBad = (res) => (res.errors?.length > 5) || (!res.data || res.data.length === 0);
 
-  // Attempt 1: UTF-8 (auto delimiter)
-  let text = buffer.toString('utf8');
-  let res  = Papa.parse(text, { header: true });
-  if (!isBad(res)) return res.data || [];
+  if (!isLikelyUtf16) {
+    // Attempt 1: UTF-8 (auto delimiter)
+    const textUtf8 = buffer.toString('utf8');
+    const resUtf8  = Papa.parse(textUtf8, { header: true });
+    if (!isBad(resUtf8)) return resUtf8.data || [];
+  }
+
+  // Force UTF-16 (LE) if sniff says so, or if UTF-8 attempt looked bad
+  const text16 = iconv.decode(buffer, 'utf16le');
 
   // Attempt 2: UTF-16 + TAB
-  text = iconv.decode(buffer, 'utf16le');
-  res  = Papa.parse(text, { header: true, delimiter: '\t' });
-  if (!isBad(res)) return res.data || [];
+  let res16 = Papa.parse(text16, { header: true, delimiter: '\t' });
+  if (!isBad(res16)) return res16.data || [];
 
-  // Attempt 3: UTF-16 + COMMA  <-- this is the key for your Ahrefs export
-  res  = Papa.parse(text, { header: true, delimiter: ',' });
-  return res.data || [];
+  // Attempt 3: UTF-16 + COMMA
+  res16 = Papa.parse(text16, { header: true, delimiter: ',' });
+  return res16.data || [];
 }
-
 // Find a column among several possible header names (aggressive normalization)
 function pickCol(row, candidates) {
   const norm = (s) => String(s ?? '')
