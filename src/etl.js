@@ -5,15 +5,22 @@ import { Actor, log } from 'apify';
 import { emptyNormalized } from './schema.js';
 import { computeScores } from './scoring.js';
 
-// CSV: try UTF-8; if empty/garbled, fallback to UTF-16 + tab (Ahrefs)
+// CSV: try UTF-8; if empty/garbled, fallback to UTF-16 + tab, then UTF-16 + comma (Ahrefs variants)
 function parseCsvSmart(buffer) {
+  const isBad = (res) => (res.errors?.length > 5) || (!res.data || res.data.length === 0);
+
+  // Attempt 1: UTF-8 (auto delimiter)
   let text = buffer.toString('utf8');
   let res  = Papa.parse(text, { header: true });
-  const bad = (res.errors?.length > 5) || (!res.data || res.data.length === 0);
-  if (bad) {
-    text = iconv.decode(buffer, 'utf16le');
-    res  = Papa.parse(text, { header: true, delimiter: '\t' });
-  }
+  if (!isBad(res)) return res.data || [];
+
+  // Attempt 2: UTF-16 + TAB
+  text = iconv.decode(buffer, 'utf16le');
+  res  = Papa.parse(text, { header: true, delimiter: '\t' });
+  if (!isBad(res)) return res.data || [];
+
+  // Attempt 3: UTF-16 + COMMA  <-- this is the key for your Ahrefs export
+  res  = Papa.parse(text, { header: true, delimiter: ',' });
   return res.data || [];
 }
 
