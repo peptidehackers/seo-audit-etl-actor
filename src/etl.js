@@ -88,33 +88,44 @@ export async function processZip({ client, domain, runDate, zipUrl, fetchImpl })
   const out  = emptyNormalized(client, domain, runDate);
   const prov = out.provenance;
 
-  // ---------- Ahrefs Keywords (your exact columns)
-  // Headers: Current position, Previous position (capitalized first word)
-  let buf = readEntry(zip, 'ahrefs_keywords.csv', manifest);
-  if (buf) {
-    const rows = parseCsvSmart(buf);
-    if (rows.length) {
-      const posCol =
-        pickCol(rows[0], ['Current position']) ||
-        pickCol(rows[0], ['Previous position']);
-      log.info('Ahrefs keywords: position column', { posCol });
+// ---------- Ahrefs Keywords (force "Current position" > "Previous position", with debug)
+let buf = readEntry(zip, 'ahrefs_keywords.csv', manifest);
+if (buf) {
+  const rows = parseCsvSmart(buf);
+  if (rows.length) {
+    // DEBUG: save the headers we actually saw so you can verify in KV Store
+    const headers = Object.keys(rows[0] || {});
+    await Actor.setValue('ahrefs_keywords_headers.json', headers);
 
-      if (posCol) {
-        const pos = rows
-          .map(r => toNum(r[posCol]))
-          .filter(n => Number.isFinite(n) && n > 0);
+    // Exact names you provided, matched with aggressive normalization
+    const posCol =
+      pickCol(rows[0], ['Current position']) ||
+      pickCol(rows[0], ['Previous position']);
+
+    log.info('Ahrefs keywords: position column', { posCol });
+
+    if (posCol) {
+      const pos = rows
+        .map(r => toNum(r[posCol]))
+        .filter(n => Number.isFinite(n) && n > 0);
+
+      if (pos.length > 0) {
         out.onsite.keywords.top3   = pos.filter(p => p <= 3).length;
         out.onsite.keywords.top10  = pos.filter(p => p <= 10).length;
         out.onsite.keywords.top100 = pos.filter(p => p <= 100).length;
       } else {
-        log.warning('Ahrefs keywords: no "Current position" / "Previous position" column found.');
+        log.warning('Ahrefs keywords: position column parsed, but no positive numeric positions found.');
       }
+    } else {
+      log.warning('Ahrefs keywords: no "Current position" / "Previous position" column found.');
+    }
 
-      prov.ahrefs = true;
-      manifest['ahrefs_keywords.csv'].rows = rows.length;
-    } else manifest['ahrefs_keywords.csv'].status = 'partial';
+    prov.ahrefs = true;
+    manifest['ahrefs_keywords.csv'].rows = rows.length;
+  } else {
+    manifest['ahrefs_keywords.csv'].status = 'partial';
   }
-
+}
   // ---------- Ahrefs Top Pages (flexible URL detection incl. "Current URL")
   buf = readEntry(zip, 'ahrefs_top_pages.csv', manifest);
   if (buf) {
